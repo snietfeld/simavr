@@ -31,7 +31,8 @@ enum MsgType {
   INIT_FAILED=7,
   READ_DATA_OK=8,
   WRITE_DATA_OK=9,
-  STEP_OK=10
+  STEP_OK=10,
+  KILL_OK=11
 };
 
 struct msg_buffer {
@@ -69,14 +70,24 @@ int main(int argc, char* argv[])
     printf("Arg %d: %s\n", i, argv[i]);
   }
 
-  if (argc != 4){
-    printf("Error: Expected 3 arguments, received %d\n", argc-1);
+  if (argc != 5){
+    printf("Error: Expected 4 arguments, received %d\n", argc-1);
     return -1;
   }
 
-  const char* firmware_path = argv[1];
-  key_t in_key = atoi(argv[2]);
-  key_t out_key = atoi(argv[3]);
+  const char* firmware_path = argv[1];  // Path to firmware hex
+  key_t in_key = atoi(argv[2]);         // Input message queue key
+  key_t out_key = atoi(argv[3]);        // Output message queue key
+  const char* log_path = argv[4];        // Path to redirect output to
+
+  int log_fd = open(log_path, O_WRONLY);
+  if (log_fd){
+    dup2(log_fd, fileno(stdout));  // redirect stdout
+    dup2(log_fd, fileno(stderr));
+  }
+  else{
+    printf("SERVER: Error - Unable to open %s for writing.\n", log_path);
+  }
 
   
   // Create message queue
@@ -114,15 +125,17 @@ int main(int argc, char* argv[])
   
   
   // MAIN LOOP
-  while(1){
+  int kill_requested = 0;
+  
+  while(!kill_requested){
     // Check for new message
     //printf("SERVER: Waiting for message...\n");
     if (msgrcv(in_msgid, &message, sizeof(message), 0, 0) == -1){
-      printf("Error: msgrcv() returned -1\nExiting...\n");
+      printf("SERVER: Error: msgrcv() returned -1\nExiting...\n");
       break;
     }
   
-    //printf("SERVER: Data Received is: %s \n", message.msg_text);
+    //printf("SERVER: Received message type %ld: %s \n", message.msg_type, message.msg_text);
   
     // Process message
     enum MsgType t = message.msg_type;
@@ -145,8 +158,9 @@ int main(int argc, char* argv[])
 	
 	if (msgsnd(out_msgid, &message, sizeof(message), IPC_NOWAIT) == -1)
 	  perror("SERVER: Error ");
-	else
+	else {
 	  //printf("SERVER: Response sent.\n");
+	}
 
 	break;
       }
@@ -158,8 +172,9 @@ int main(int argc, char* argv[])
 
 	if (msgsnd(out_msgid, &message, sizeof(message), IPC_NOWAIT) == -1)
 	  perror("SERVER: Error ");
-	else
+	else {
 	  //printf("SERVER: Response sent.\n");
+	}
 	
 	break;
       }
@@ -173,8 +188,9 @@ int main(int argc, char* argv[])
 
 	if (msgsnd(out_msgid, &message, sizeof(message), IPC_NOWAIT) == -1)
 	  perror("SERVER: Error ");
-	else
+	else {
 	  //printf("SERVER: Response sent.\n");
+	}
 	
 	break;
       }
@@ -188,14 +204,25 @@ int main(int argc, char* argv[])
 
 	if (msgsnd(out_msgid, &message, sizeof(message), IPC_NOWAIT) == -1)
 	  perror("SERVER: Error ");
-	else
+	else {
 	  //printf("SERVER: Response sent.\n");
+	}
 	
 	break;
       }
     case KILL:
       {
-	//printf("SERVER: Received KILL message...\n");
+	printf("SERVER: Received KILL message...\n");
+
+	message.msg_type = KILL_OK;
+
+	if (msgsnd(out_msgid, &message, sizeof(message), IPC_NOWAIT) == -1)
+	  perror("SERVER: Error ");
+	else {
+	  printf("SERVER: Response sent.\n");
+	}
+	  
+	kill_requested = 1;
 	break;
       }
     case INIT_OK:
@@ -203,7 +230,8 @@ int main(int argc, char* argv[])
     case READ_DATA_OK:
     case WRITE_DATA_OK:
     case STEP_OK:
-      //printf("Received invalid message type: %u\n", t);
+    case KILL_OK:
+      printf("SERVER: Received invalid message type: %u\n", t);
       break;
   }
 
