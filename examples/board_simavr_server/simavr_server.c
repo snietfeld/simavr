@@ -40,14 +40,29 @@ struct msg_buffer {
   char msg_text[SRAM_BYTES];
 } message;
 
-void step(uint64_t N_steps){
+typedef struct step_payload {
+  uint64_t N_max_steps;
+  uint32_t interrupt_addr;    // Address in avr->data (offset)
+  uint32_t interrupt_mask;
+} Step_Payload;
+
+uint64_t step(uint64_t N_max_steps, uint32_t interrupt_addr, uint32_t interrupt_mask){
   static uint64_t instruction_count = 0;
+  int32_t* p_interrupt = (int32_t*)&(avr->data[interrupt_addr]);
 
   if (avr->state != cpu_Running)
-    return;
-  
-  for (uint64_t i = 0; i < N_steps; i++){
+    return 0;
+
+  // If using interrupt, set interrupt bits
+  if (interrupt_addr){
+    *p_interrupt |= interrupt_mask;
+  }
+
+  uint64_t cycles;
+  for (cycles = 0; cycles < N_max_steps; cycles++){
     int state = avr_run(avr);
+
+    instruction_count++;
     
     //printf("CPU State: %d\n", state);
     if (state == cpu_Done) {
@@ -59,9 +74,14 @@ void step(uint64_t N_steps){
       printf("CPU CRASHED\n");
       break;
     }
-    instruction_count++;
+
+    // Check if interrupt has been cleared
+    if (interrupt_addr && !(*p_interrupt &= interrupt_mask)){
+      break;
+    }
   }
-  //printf("CPU emulator yielding at instruction count: %ld\n", instruction_count);  
+  //printf("CPU emulator yielding after cycles: %ld\n", cycles);
+  return cycles;
 }
 
 int main(int argc, char* argv[])
@@ -197,10 +217,24 @@ int main(int argc, char* argv[])
     case STEP:
       {
 	//printf("SERVER: Received STEP message...\n");
-	step(266666);
+
+	// Pull step count, end addr and end mask out
+	Step_Payload payload = *(Step_Payload*)(&message.msg_text);
+	//printf("  N_max_steps: %ld\n  interrupt_addr: 0x%x\n  interrupt_mask: 0x%x\n",
+	//      payload.N_max_steps, payload.interrupt_addr, payload.interrupt_mask);
+
+	uint64_t cycles = step(payload.N_max_steps,
+			       payload.interrupt_addr, payload.interrupt_mask);
+
+	// Package response -- must match emulator.cpp
+	struct step_response {
+	  uint64_t N_steps;
+	} response;
+
+	response.N_steps = cycles;
 
 	message.msg_type = STEP_OK;
-	memcpy(message.msg_text, avr->data, SRAM_BYTES);
+	memcpy(message.msg_text, &response, sizeof(response));
 
 	if (msgsnd(out_msgid, &message, sizeof(message), IPC_NOWAIT) == -1)
 	  perror("SERVER: Error ");
