@@ -85,7 +85,18 @@ avr_t* init_cpu(const char* firmware_path)
 
 	elf_firmware_t f = {{0}};
 	uint32_t loadBase = AVR_SEGMENT_OFFSET_FLASH;
-	sim_setup_firmware(firmware_path, loadBase, &f, "simavr-server");
+
+	// Note: Call to sim_setup_firmware will exit() if the .hex file can't be found.
+	// We don't want this, so return null if file does not exist
+	if (access(firmware_path, F_OK) == 0) {
+	  // file exists
+	  sim_setup_firmware(firmware_path, loadBase, &f, "simavr-server");
+	} else {
+	  // file doesn't exist
+	  printf("Error: .hex file does not exist: %s\n", firmware_path);
+	  return NULL;
+	}
+	
 	
 	avr = avr_make_mcu_by_name(mmcu);
 	if (!avr) {

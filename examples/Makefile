@@ -20,3 +20,6 @@ clean:
 #
 extra_board_usb:
 	make -C extra_board_usb
+	
+simavr_server:
+	make -C board_simavr_server
